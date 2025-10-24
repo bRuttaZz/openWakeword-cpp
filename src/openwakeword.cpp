@@ -2,13 +2,28 @@
 #include <cstdio>
 #include <filesystem>
 #include <iostream>
+#include <memory>
 #include <mutex>
 #include <numeric>
 #include <vector>
 
 #include <onnxruntime_cxx_api.h>
 #include "./openwakeword.hpp"
+#include <openwakeword.h>
 
+static oww::Context ctx;
+
+oww::State::State(size_t numWakeWords)
+    :mutFeatures(numWakeWords), cvFeatures(numWakeWords),
+    featuresExhausted(numWakeWords), featuresReady(numWakeWords),
+    numReady(0), samplesExhausted(false), melsExhausted(false),
+    samplesReady(false), melsReady(false)
+    {
+        env = Ort::Env(OrtLoggingLevel::ORT_LOGGING_LEVEL_WARNING, instanceName.c_str());
+        env.DisableTelemetryEvents();
+        std::fill(featuresExhausted.begin(), featuresExhausted.end(), false);
+        std::fill(featuresReady.begin(), featuresReady.end(), false);
+    }
 
 
 void oww::audioToMels(oww::Settings &settings, oww::State &state, std::vector<float> &samplesIn, std::vector<float> &melsOut) {
@@ -250,5 +265,45 @@ void oww::featuresToOutput(oww::Settings &settings, oww::State &state, size_t ww
             todoFeatures.erase(todoFeatures.begin(), todoFeatures.begin() + (1 * oww::embFeatures));
             numBufferedFeatures = todoFeatures.size() / oww::embFeatures;
         }
+    }
+}
+
+extern "C" {
+    int oww_init(const OwwConf *oww_conf) {
+        if (!oww_conf) return -1;
+        if (!oww_conf->melspectrogram_model_path || !oww_conf->embedding_model_path)
+            return -1;
+
+        std::string melModelPathS(oww_conf->melspectrogram_model_path);
+        std::string embModelPathS(oww_conf->embedding_model_path);
+        std::vector<std::filesystem::path> wwModelPaths;
+        for (size_t i=0; i<oww_conf->num_wwd_models; i++) {
+            if (!oww_conf->wwd_model_paths[i])
+                continue;
+            std::string path(oww_conf->wwd_model_paths[i]);
+            wwModelPaths.emplace_back(path);
+        }
+
+        ctx.settings = std::make_unique<oww::Settings>();
+        ctx.settings->melModelPath = std::filesystem::path(melModelPathS);
+        ctx.settings->embModelPath = std::filesystem::path(embModelPathS);
+        ctx.settings->wwModelPaths = std::move(wwModelPaths);
+
+        ctx.settings->stepFrames = oww_conf->step_frames;
+        ctx.settings->frameSize = ctx.settings->stepFrames * oww::chunkSamples;
+        ctx.settings->threshold = oww_conf->threshold;
+        ctx.settings->triggerLevel = oww_conf->trigger_level;
+        ctx.settings->refractory = oww_conf->refractory;
+        ctx.settings->debug = (oww_conf->debug != 0);
+
+        const size_t numWakeWords = ctx.settings->wwModelPaths.size();
+        ctx.state = std::make_unique<oww::State>(numWakeWords);
+
+        return 0;
+    }
+
+    void oww_cleanup() {
+        ctx.state.reset();
+        ctx.settings.reset();
     }
 }

@@ -1,9 +1,9 @@
 #pragma once
 
-#include <algorithm>
 #include <condition_variable>
 #include <cstdio>
 #include <filesystem>
+#include <memory>
 #include <mutex>
 #include <vector>
 
@@ -49,17 +49,12 @@ struct State {
     std::mutex mutSamples, mutMels, mutReady, mutOutput;
     std::condition_variable cvSamples, cvMels, cvReady;
 
-    State(size_t numWakeWords)
-        :   mutFeatures(numWakeWords), cvFeatures(numWakeWords),
-            featuresExhausted(numWakeWords), featuresReady(numWakeWords),
-            numReady(0), samplesExhausted(false), melsExhausted(false),
-            samplesReady(false), melsReady(false)
-    {
-        env = Ort::Env(OrtLoggingLevel::ORT_LOGGING_LEVEL_WARNING, instanceName.c_str());
-        env.DisableTelemetryEvents();
-        std::fill(featuresExhausted.begin(), featuresExhausted.end(), false);
-        std::fill(featuresReady.begin(), featuresReady.end(), false);
-    }
+    State(size_t numWakeWords);
+};
+
+struct Context {
+    std::unique_ptr<Settings> settings;
+    std::unique_ptr<State> state;
 };
 
 void audioToMels(Settings &settings, State &state, std::vector<float> &samplesIn, std::vector<float> &melsOut) ;

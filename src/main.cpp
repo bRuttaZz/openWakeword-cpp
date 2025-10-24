@@ -63,16 +63,13 @@ int main(int argc, char *argv[]) {
     std::vector<float> mels;
     std::vector<std::vector<float>> features(numWakeWords);
 
-    std::thread melThread(oww::audioToMels, std::ref(settings), std::ref(state), std::ref(floatSamples),
-                    std::ref(mels));
-    std::thread featuresThread(oww::melsToFeatures, std::ref(settings), std::ref(state), std::ref(mels),
-                        std::ref(features));
+    std::thread melThread(oww::audioToMels, std::ref(settings), std::ref(state), std::ref(floatSamples), std::ref(mels));
+    std::thread featuresThread(oww::melsToFeatures, std::ref(settings), std::ref(state), std::ref(mels), std::ref(features));
 
     std::vector<std::thread> wwThreads;
     for (size_t i = 0; i < numWakeWords; i++) {
         wwThreads.push_back(
-            std::thread(oww::featuresToOutput, std::ref(settings),
-            std::ref(state), i, std::ref(features))
+            std::thread(oww::featuresToOutput, std::ref(settings), std::ref(state), i, std::ref(features))
         );
     }
 
@@ -116,7 +113,6 @@ int main(int argc, char *argv[]) {
         state.samplesReady = true;
         state.cvSamples.notify_one();
     }
-
     melThread.join();
 
     // Signal features thread that mels have been exhausted
