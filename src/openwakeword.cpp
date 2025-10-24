@@ -10,10 +10,7 @@
 
 #include <onnxruntime_cxx_api.h>
 
-using namespace std;
-using namespace filesystem;
-
-const string instanceName = "openWakeWord";
+const std::string instanceName = "openWakeWord";
 const size_t chunkSamples = 1280; // 80 ms
 const size_t numMels = 32;
 const size_t embWindowSize = 76; // 775 ms
@@ -25,9 +22,9 @@ void ensureArg(int argc, char *argv[], int argi);
 void printUsage(char *argv[]);
 
 struct Settings {
-  path melModelPath = path("models/melspectrogram.onnx");
-  path embModelPath = path("models/embedding_model.onnx");
-  vector<path> wwModelPaths;
+  std::filesystem::path melModelPath = std::filesystem::path("models/melspectrogram.onnx");
+  std::filesystem::path embModelPath = std::filesystem::path("models/embedding_model.onnx");
+  std::vector<std::filesystem::path> wwModelPaths;
 
   size_t frameSize = 4 * chunkSamples;
   size_t stepFrames = 4;
@@ -42,17 +39,16 @@ struct Settings {
 };
 
 struct State {
-
   Ort::Env env;
-  vector<mutex> mutFeatures;
-  vector<condition_variable> cvFeatures;
-  vector<bool> featuresExhausted;
-  vector<bool> featuresReady;
+  std::vector<std::mutex> mutFeatures;
+  std::vector<std::condition_variable> cvFeatures;
+  std::vector<bool> featuresExhausted;
+  std::vector<bool> featuresReady;
   size_t numReady;
   bool samplesExhausted = false, melsExhausted = false;
   bool samplesReady = false, melsReady = false;
-  mutex mutSamples, mutMels, mutReady, mutOutput;
-  condition_variable cvSamples, cvMels, cvReady;
+  std::mutex mutSamples, mutMels, mutReady, mutOutput;
+  std::condition_variable cvSamples, cvMels, cvReady;
 
   State(size_t numWakeWords)
       : mutFeatures(numWakeWords), cvFeatures(numWakeWords),
@@ -62,41 +58,37 @@ struct State {
     env = Ort::Env(OrtLoggingLevel::ORT_LOGGING_LEVEL_WARNING,
                    instanceName.c_str());
     env.DisableTelemetryEvents();
-
     fill(featuresExhausted.begin(), featuresExhausted.end(), false);
     fill(featuresReady.begin(), featuresReady.end(), false);
   }
 };
 
-void audioToMels(Settings &settings, State &state, vector<float> &samplesIn,
-                 vector<float> &melsOut) {
+void audioToMels(Settings &settings, State &state, std::vector<float> &samplesIn, std::vector<float> &melsOut) {
   Ort::AllocatorWithDefaultOptions allocator;
-  auto memoryInfo = Ort::MemoryInfo::CreateCpu(
-      OrtAllocatorType::OrtArenaAllocator, OrtMemType::OrtMemTypeDefault);
+  auto memoryInfo = Ort::MemoryInfo::CreateCpu(OrtAllocatorType::OrtArenaAllocator, OrtMemType::OrtMemTypeDefault);
 
-  auto melSession =
-      Ort::Session(state.env, settings.melModelPath.c_str(), settings.options);
+  auto melSession = Ort::Session(state.env, settings.melModelPath.c_str(), settings.options);
 
-  vector<int64_t> samplesShape{1, (int64_t)settings.frameSize};
+  std::vector<int64_t> samplesShape{1, (int64_t)settings.frameSize};
 
   auto melInputName = melSession.GetInputNameAllocated(0, allocator);
-  vector<const char *> melInputNames{melInputName.get()};
+  std::vector<const char *> melInputNames{melInputName.get()};
 
   auto melOutputName = melSession.GetOutputNameAllocated(0, allocator);
-  vector<const char *> melOutputNames{melOutputName.get()};
+  std::vector<const char *> melOutputNames{melOutputName.get()};
 
-  vector<float> todoSamples;
+  std::vector<float> todoSamples;
 
   {
-    unique_lock lockReady(state.mutReady);
-    cerr << "[LOG] Loaded mel spectrogram model" << endl;
+    std::unique_lock lockReady(state.mutReady);
+    std::cerr << "[LOG] Loaded mel spectrogram model" << std::endl;
     state.numReady += 1;
     state.cvReady.notify_one();
   }
 
   while (true) {
     {
-      unique_lock lockSamples{state.mutSamples};
+      std::unique_lock lockSamples{state.mutSamples};
       state.cvSamples.wait(lockSamples,
                            [&state] { return state.samplesReady; });
       if (state.samplesExhausted && samplesIn.empty()) {
@@ -112,7 +104,7 @@ void audioToMels(Settings &settings, State &state, vector<float> &samplesIn,
 
     while (todoSamples.size() >= settings.frameSize) {
       // Generate mels for audio samples
-      vector<Ort::Value> melInputTensors;
+      std::vector<Ort::Value> melInputTensors;
       melInputTensors.push_back(Ort::Value::CreateTensor<float>(
           memoryInfo, todoSamples.data(), settings.frameSize,
           samplesShape.data(), samplesShape.size()));
@@ -129,10 +121,10 @@ void audioToMels(Settings &settings, State &state, vector<float> &samplesIn,
 
       const float *melData = melOut.GetTensorData<float>();
       size_t melCount =
-          accumulate(melShape.begin(), melShape.end(), 1, multiplies<>());
+          accumulate(melShape.begin(), melShape.end(), 1, std::multiplies<>());
 
       {
-        unique_lock lockMels{state.mutMels};
+        std::unique_lock lockMels{state.mutMels};
         for (size_t i = 0; i < melCount; i++) {
           // Scale mels for Google speech embedding model
           melsOut.push_back((melData[i] / 10.0f) + 2.0f);
@@ -148,8 +140,8 @@ void audioToMels(Settings &settings, State &state, vector<float> &samplesIn,
 
 } // audioToMels
 
-void melsToFeatures(Settings &settings, State &state, vector<float> &melsIn,
-                    vector<vector<float>> &featuresOut) {
+void melsToFeatures(Settings &settings, State &state, std::vector<float> &melsIn,
+                    std::vector<std::vector<float>> &featuresOut) {
   Ort::AllocatorWithDefaultOptions allocator;
   auto memoryInfo = Ort::MemoryInfo::CreateCpu(
       OrtAllocatorType::OrtArenaAllocator, OrtMemType::OrtMemTypeDefault);
@@ -157,27 +149,27 @@ void melsToFeatures(Settings &settings, State &state, vector<float> &melsIn,
   auto embSession =
       Ort::Session(state.env, settings.embModelPath.c_str(), settings.options);
 
-  vector<int64_t> embShape{1, (int64_t)embWindowSize, (int64_t)numMels, 1};
+  std::vector<int64_t> embShape{1, (int64_t)embWindowSize, (int64_t)numMels, 1};
 
   auto embInputName = embSession.GetInputNameAllocated(0, allocator);
-  vector<const char *> embInputNames{embInputName.get()};
+  std::vector<const char *> embInputNames{embInputName.get()};
 
   auto embOutputName = embSession.GetOutputNameAllocated(0, allocator);
-  vector<const char *> embOutputNames{embOutputName.get()};
+  std::vector<const char *> embOutputNames{embOutputName.get()};
 
-  vector<float> todoMels;
+  std::vector<float> todoMels;
   size_t melFrames = 0;
 
   {
-    unique_lock lockReady(state.mutReady);
-    cerr << "[LOG] Loaded speech embedding model" << endl;
+    std::unique_lock lockReady(state.mutReady);
+    std::cerr << "[LOG] Loaded speech embedding model" << std::endl;
     state.numReady += 1;
     state.cvReady.notify_one();
   }
 
   while (true) {
     {
-      unique_lock lockMels{state.mutMels};
+      std::unique_lock lockMels{state.mutMels};
       state.cvMels.wait(lockMels, [&state] { return state.melsReady; });
       if (state.melsExhausted && melsIn.empty()) {
         break;
@@ -193,7 +185,7 @@ void melsToFeatures(Settings &settings, State &state, vector<float> &melsIn,
     melFrames = todoMels.size() / numMels;
     while (melFrames >= embWindowSize) {
       // Generate embeddings for mels
-      vector<Ort::Value> embInputTensors;
+      std::vector<Ort::Value> embInputTensors;
       embInputTensors.push_back(Ort::Value::CreateTensor<float>(
           memoryInfo, todoMels.data(), embWindowSize * numMels, embShape.data(),
           embShape.size()));
@@ -209,11 +201,11 @@ void melsToFeatures(Settings &settings, State &state, vector<float> &melsIn,
 
       const float *embOutData = embOut.GetTensorData<float>();
       size_t embOutCount =
-          accumulate(embOutShape.begin(), embOutShape.end(), 1, multiplies<>());
+          accumulate(embOutShape.begin(), embOutShape.end(), 1, std::multiplies<>());
 
       // Send to each wake word model
       for (size_t i = 0; i < featuresOut.size(); i++) {
-        unique_lock lockFeatures{state.mutFeatures[i]};
+        std::unique_lock lockFeatures{state.mutFeatures[i]};
         copy(embOutData, embOutData + embOutCount,
              back_inserter(featuresOut[i]));
         state.featuresReady[i] = true;
@@ -231,7 +223,7 @@ void melsToFeatures(Settings &settings, State &state, vector<float> &melsIn,
 } // melsToFeatures
 
 void featuresToOutput(Settings &settings, State &state, size_t wwIdx,
-                      vector<vector<float>> &featuresIn) {
+                      std::vector<std::vector<float>> &featuresIn) {
   Ort::AllocatorWithDefaultOptions allocator;
   auto memoryInfo = Ort::MemoryInfo::CreateCpu(
       OrtAllocatorType::OrtArenaAllocator, OrtMemType::OrtMemTypeDefault);
@@ -241,28 +233,28 @@ void featuresToOutput(Settings &settings, State &state, size_t wwIdx,
   auto wwSession =
       Ort::Session(state.env, wwModelPath.c_str(), settings.options);
 
-  vector<int64_t> wwShape{1, (int64_t)wwFeatures, (int64_t)embFeatures};
+  std::vector<int64_t> wwShape{1, (int64_t)wwFeatures, (int64_t)embFeatures};
 
   auto wwInputName = wwSession.GetInputNameAllocated(0, allocator);
-  vector<const char *> wwInputNames{wwInputName.get()};
+  std::vector<const char *> wwInputNames{wwInputName.get()};
 
   auto wwOutputName = wwSession.GetOutputNameAllocated(0, allocator);
-  vector<const char *> wwOutputNames{wwOutputName.get()};
+  std::vector<const char *> wwOutputNames{wwOutputName.get()};
 
-  vector<float> todoFeatures;
+  std::vector<float> todoFeatures;
   size_t numBufferedFeatures = 0;
   int activation = 0;
 
   {
-    unique_lock lockReady(state.mutReady);
-    cerr << "[LOG] Loaded " << wwName << " model" << endl;
+    std::unique_lock lockReady(state.mutReady);
+    std::cerr << "[LOG] Loaded " << wwName << " model" << std::endl;
     state.numReady += 1;
     state.cvReady.notify_one();
   }
 
   while (true) {
     {
-      unique_lock lockFeatures{state.mutFeatures[wwIdx]};
+      std::unique_lock lockFeatures{state.mutFeatures[wwIdx]};
       state.cvFeatures[wwIdx].wait(
           lockFeatures, [&state, wwIdx] { return state.featuresReady[wwIdx]; });
       if (state.featuresExhausted[wwIdx] && featuresIn[wwIdx].empty()) {
@@ -279,7 +271,7 @@ void featuresToOutput(Settings &settings, State &state, size_t wwIdx,
 
     numBufferedFeatures = todoFeatures.size() / embFeatures;
     while (numBufferedFeatures >= wwFeatures) {
-      vector<Ort::Value> wwInputTensors;
+      std::vector<Ort::Value> wwInputTensors;
       wwInputTensors.push_back(Ort::Value::CreateTensor<float>(
           memoryInfo, todoFeatures.data(), wwFeatures * embFeatures,
           wwShape.data(), wwShape.size()));
@@ -293,14 +285,14 @@ void featuresToOutput(Settings &settings, State &state, size_t wwIdx,
       const auto wwOutShape = wwOutInfo.GetShape();
       const float *wwOutData = wwOut.GetTensorData<float>();
       size_t wwOutCount =
-          accumulate(wwOutShape.begin(), wwOutShape.end(), 1, multiplies<>());
+          accumulate(wwOutShape.begin(), wwOutShape.end(), 1, std::multiplies<>());
 
       for (size_t i = 0; i < wwOutCount; i++) {
         auto probability = wwOutData[i];
         if (settings.debug) {
           {
-            unique_lock lockOutput(state.mutOutput);
-            cerr << wwName << " " << probability << endl;
+            std::unique_lock lockOutput(state.mutOutput);
+            std::cerr << wwName << " " << probability << std::endl;
           }
         }
 
@@ -310,17 +302,17 @@ void featuresToOutput(Settings &settings, State &state, size_t wwIdx,
           if (activation >= settings.triggerLevel) {
             // Trigger level reached
             {
-              unique_lock lockOutput(state.mutOutput);
-              cout << wwName << endl;
+              std::unique_lock lockOutput(state.mutOutput);
+              std::cout << wwName << std::endl;
             }
             activation = -settings.refractory;
           }
         } else {
           // Back towards 0
           if (activation > 0) {
-            activation = max(0, activation - 1);
+            activation = std::max(0, activation - 1);
           } else {
-            activation = min(0, activation + 1);
+            activation = std::min(0, activation + 1);
           }
         }
       }
@@ -344,11 +336,11 @@ int main(int argc, char *argv[]) {
 
   // Parse arguments
   for (int i = 1; i < argc; i++) {
-    string arg = argv[i];
+    std::string arg = argv[i];
 
     if (arg == "-m" || arg == "--model") {
       ensureArg(argc, argv, i);
-      settings.wwModelPaths.push_back(path(argv[++i]));
+      settings.wwModelPaths.push_back(std::filesystem::path(argv[++i]));
     } else if (arg == "-t" || arg == "--threshold") {
       ensureArg(argc, argv, i);
       settings.threshold = atof(argv[++i]);
@@ -363,10 +355,10 @@ int main(int argc, char *argv[]) {
       settings.stepFrames = atoi(argv[++i]);
     } else if (arg == "--melspectrogram-model") {
       ensureArg(argc, argv, i);
-      settings.melModelPath = path(argv[++i]);
+      settings.melModelPath = std::filesystem::path(argv[++i]);
     } else if (arg == "--embedding-model") {
       ensureArg(argc, argv, i);
-      settings.embModelPath = path(argv[++i]);
+      settings.embModelPath = std::filesystem::path(argv[++i]);
     } else if (arg == "--debug") {
       settings.debug = true;
     } else if (arg == "-h" || arg == "--help") {
@@ -376,7 +368,7 @@ int main(int argc, char *argv[]) {
   }
 
   if (settings.wwModelPaths.empty()) {
-    cerr << "[ERROR] --model is required" << endl;
+    std::cerr << "[ERROR] --model is required" << std::endl;
     return 1;
   }
 
@@ -389,31 +381,31 @@ int main(int argc, char *argv[]) {
   const size_t numWakeWords = settings.wwModelPaths.size();
   State state(numWakeWords);
 
-  vector<float> floatSamples;
-  vector<float> mels;
-  vector<vector<float>> features(numWakeWords);
+  std::vector<float> floatSamples;
+  std::vector<float> mels;
+  std::vector<std::vector<float>> features(numWakeWords);
 
-  thread melThread(audioToMels, ref(settings), ref(state), ref(floatSamples),
-                   ref(mels));
-  thread featuresThread(melsToFeatures, ref(settings), ref(state), ref(mels),
-                        ref(features));
+  std::thread melThread(audioToMels, std::ref(settings), std::ref(state), std::ref(floatSamples),
+                   std::ref(mels));
+  std::thread featuresThread(melsToFeatures, std::ref(settings), std::ref(state), std::ref(mels),
+                        std::ref(features));
 
-  vector<thread> wwThreads;
+  std::vector<std::thread> wwThreads;
   for (size_t i = 0; i < numWakeWords; i++) {
     wwThreads.push_back(
-        thread(featuresToOutput, ref(settings), ref(state), i, ref(features)));
+        std::thread(featuresToOutput, std::ref(settings), std::ref(state), i, std::ref(features)));
   }
 
   // Block until ready
   const size_t numReadyExpected = 2 + numWakeWords;
   {
-    unique_lock lockReady(state.mutReady);
+    std::unique_lock lockReady(state.mutReady);
     state.cvReady.wait(lockReady, [&state, numReadyExpected] {
       return state.numReady == numReadyExpected;
     });
   }
 
-  cerr << "[LOG] Ready" << endl;
+  std::cerr << "[LOG] Ready" << std::endl;
 
   // Main loop
   int16_t samples[settings.frameSize];
@@ -422,7 +414,7 @@ int main(int argc, char *argv[]) {
 
   while (framesRead > 0) {
     {
-      unique_lock lockSamples{state.mutSamples};
+      std::unique_lock lockSamples{state.mutSamples};
 
       for (size_t i = 0; i < framesRead; i++) {
         // NOTE: we do NOT normalize here
@@ -439,7 +431,7 @@ int main(int argc, char *argv[]) {
 
   // Signal mel thread that samples have been exhausted
   {
-    unique_lock lockSamples{state.mutSamples};
+    std::unique_lock lockSamples{state.mutSamples};
     state.samplesExhausted = true;
     state.samplesReady = true;
     state.cvSamples.notify_one();
@@ -449,7 +441,7 @@ int main(int argc, char *argv[]) {
 
   // Signal features thread that mels have been exhausted
   {
-    unique_lock lockMels{state.mutMels};
+    std::unique_lock lockMels{state.mutMels};
     state.melsExhausted = true;
     state.melsReady = true;
     state.cvMels.notify_one();
@@ -458,7 +450,7 @@ int main(int argc, char *argv[]) {
 
   // Signal wake word threads that features have been exhausted
   for (size_t i = 0; i < numWakeWords; i++) {
-    unique_lock lockFeatures{state.mutFeatures[i]};
+    std::unique_lock lockFeatures{state.mutFeatures[i]};
     state.featuresExhausted[i] = true;
     state.featuresReady[i] = true;
     state.cvFeatures[i].notify_one();
@@ -472,39 +464,39 @@ int main(int argc, char *argv[]) {
 }
 
 void printUsage(char *argv[]) {
-  cerr << endl;
-  cerr << "usage: " << argv[0] << " [options]" << endl;
-  cerr << endl;
-  cerr << "options:" << endl;
-  cerr << "   -h        --help                  show this message and exit"
-       << endl;
-  cerr << "   -m  FILE  --model          FILE   path to wake word model "
+  std::cerr << std::endl;
+  std::cerr << "usage: " << argv[0] << " [options]" << std::endl;
+  std::cerr << std::endl;
+  std::cerr << "options:" << std::endl;
+  std::cerr << "   -h        --help                  show this message and exit"
+       << std::endl;
+  std::cerr << "   -m  FILE  --model          FILE   path to wake word model "
           "(repeat "
           "for multiple models)"
-       << endl;
-  cerr << "   -t  NUM   --threshold      NUM    threshold for activation (0-1, "
+       << std::endl;
+  std::cerr << "   -t  NUM   --threshold      NUM    threshold for activation (0-1, "
           "default: 0.5)"
-       << endl;
-  cerr << "   -l  NUM   --trigger-level  NUM    number of activations before "
+       << std::endl;
+  std::cerr << "   -l  NUM   --trigger-level  NUM    number of activations before "
           "output (default: 4)"
-       << endl;
-  cerr << "   -r  NUM   --refractory     NUM    number of steps after "
+       << std::endl;
+  std::cerr << "   -r  NUM   --refractory     NUM    number of steps after "
           "activation to wait (default: 20)"
-       << endl;
-  cerr
+       << std::endl;
+  std::cerr
       << "   --step-frames              NUM    number of 80 ms audio chunks to "
          "process at a time (default: 4)"
-      << endl;
-  cerr << "   --melspectrogram-model     FILE   path to "
+      << std::endl;
+  std::cerr << "   --melspectrogram-model     FILE   path to "
           "melspectrogram.onnx file"
-       << endl;
-  cerr << "   --embedding-model          FILE   path to "
+       << std::endl;
+  std::cerr << "   --embedding-model          FILE   path to "
           "embedding_model.onnx file"
-       << endl;
-  cerr << "   --debug                           print model probabilities to "
+       << std::endl;
+  std::cerr << "   --debug                           print model probabilities to "
           "stderr"
-       << endl;
-  cerr << endl;
+       << std::endl;
+  std::cerr << std::endl;
 }
 
 void ensureArg(int argc, char *argv[], int argi) {
