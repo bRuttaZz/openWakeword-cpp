@@ -1,4 +1,6 @@
 #include <condition_variable>
+#include <cstddef>
+#include <cstdint>
 #include <cstdio>
 #include <filesystem>
 #include <iostream>
@@ -8,10 +10,10 @@
 #include <vector>
 
 #include <onnxruntime_cxx_api.h>
-#include "./openwakeword.hpp"
 #include <openwakeword.h>
+#include "./openwakeword.hpp"
 
-static oww::Context ctx;
+static oww::RuntimeContext ctx;
 
 oww::State::State(size_t numWakeWords)
     :mutFeatures(numWakeWords), cvFeatures(numWakeWords),
@@ -274,17 +276,21 @@ extern "C" {
         if (!oww_conf->melspectrogram_model_path || !oww_conf->embedding_model_path)
             return -1;
 
+        // Re-open stdin/stdout in binary mode
+        freopen(NULL, "rb", stdin);
+
         std::string melModelPathS(oww_conf->melspectrogram_model_path);
         std::string embModelPathS(oww_conf->embedding_model_path);
         std::vector<std::filesystem::path> wwModelPaths;
         for (size_t i=0; i<oww_conf->num_wwd_models; i++) {
             if (!oww_conf->wwd_model_paths[i])
                 continue;
+            std::cout<< "File: "<< oww_conf->wwd_model_paths[i] << std::endl;
             std::string path(oww_conf->wwd_model_paths[i]);
             wwModelPaths.emplace_back(path);
         }
 
-        ctx.settings = std::make_unique<oww::Settings>();
+        ctx.settings = std::make_shared<oww::Settings>();
         ctx.settings->melModelPath = std::filesystem::path(melModelPathS);
         ctx.settings->embModelPath = std::filesystem::path(embModelPathS);
         ctx.settings->wwModelPaths = std::move(wwModelPaths);
@@ -296,14 +302,99 @@ extern "C" {
         ctx.settings->refractory = oww_conf->refractory;
         ctx.settings->debug = (oww_conf->debug != 0);
 
+        // Absolutely critical for performance
+        ctx.settings->options.SetIntraOpNumThreads(1);
+        ctx.settings->options.SetInterOpNumThreads(1);
+
         const size_t numWakeWords = ctx.settings->wwModelPaths.size();
-        ctx.state = std::make_unique<oww::State>(numWakeWords);
+        ctx.state = std::make_shared<oww::State>(numWakeWords);
+
+        // initialize the detection threads
+        ctx.floatSamples.clear();
+        ctx.mels.clear();
+        ctx.features.resize(numWakeWords);
+
+        ctx.melThread = std::thread(oww::audioToMels, std::ref(*ctx.settings), std::ref(*ctx.state), std::ref(ctx.floatSamples), std::ref(ctx.mels));
+        ctx.featuresThread = std::thread(oww::melsToFeatures, std::ref(*ctx.settings), std::ref(*ctx.state), std::ref(ctx.mels), std::ref(ctx.features));
+
+        ctx.wwThreads.clear();
+        for (size_t i = 0; i < numWakeWords; i++) {
+            ctx.wwThreads.emplace_back(
+                oww::featuresToOutput, std::ref(*ctx.settings), std::ref(*ctx.state), i, std::ref(ctx.features)
+            );
+        }
+
+        // Block until ready
+        const size_t numReadyExpected = 2 + numWakeWords;
+        {
+            std::unique_lock lockReady(ctx.state->mutReady);
+            std::shared_ptr<oww::State> state = ctx.state;
+            state->cvReady.wait(
+                lockReady, [&state, numReadyExpected] {
+                    return state->numReady == numReadyExpected;
+                }
+            );
+        }
+        std::cerr << "[LOG] Ready" << std::endl;
 
         return 0;
     }
 
     void oww_cleanup() {
+        // Signal mel thread that samples have been exhausted
+        {
+            std::unique_lock lockSamples{ctx.state->mutSamples};
+            ctx.state->samplesExhausted = true;
+            ctx.state->samplesReady = true;
+            ctx.state->cvSamples.notify_one();
+        }
+        ctx.melThread.join();
+
+        // Signal features thread that mels have been exhausted
+        {
+            std::unique_lock lockMels{ctx.state->mutMels};
+            ctx.state->melsExhausted = true;
+            ctx.state->melsReady = true;
+            ctx.state->cvMels.notify_one();
+        }
+        ctx.featuresThread.join();
+
+        size_t numWakeWords = ctx.settings->wwModelPaths.size();
+        // Signal wake word threads that features have been exhausted
+        for (size_t i = 0; i < numWakeWords; i++) {
+            std::unique_lock lockFeatures{ctx.state->mutFeatures[i]};
+            ctx.state->featuresExhausted[i] = true;
+            ctx.state->featuresReady[i] = true;
+            ctx.state->cvFeatures[i].notify_one();
+        }
+
+        for (size_t i = 0; i < numWakeWords; i++) {
+            ctx.wwThreads[i].join();
+        }
+
         ctx.state.reset();
         ctx.settings.reset();
+    }
+
+    int oww_wait_wakeword_from_file(FILE *file) {
+        if (!file)
+            file = stdin;
+
+        std::vector<int16_t> samples(ctx.settings->frameSize);
+        size_t framesRead = std::fread(samples.data(), sizeof(int16_t), ctx.settings->frameSize, file);
+        while (framesRead > 0) {
+            {
+                std::unique_lock lockSamples{ctx.state->mutSamples};
+                for (size_t i = 0; i < framesRead; i++) {
+                    // NOTE: we do NOT normalize here
+                    ctx.floatSamples.push_back(static_cast<float>(samples[i]));
+                }
+                ctx.state->samplesReady = true;
+                ctx.state->cvSamples.notify_one();
+            }
+            framesRead = std::fread(samples.data(), sizeof(int16_t), ctx.settings->frameSize, file);
+        }
+
+        return 1;
     }
 }

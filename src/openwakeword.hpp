@@ -52,9 +52,15 @@ struct State {
     State(size_t numWakeWords);
 };
 
-struct Context {
-    std::unique_ptr<Settings> settings;
-    std::unique_ptr<State> state;
+struct RuntimeContext {
+    std::shared_ptr<Settings> settings;
+    std::shared_ptr<State> state;
+    std::vector<std::thread> wwThreads;
+    std::thread melThread;
+    std::thread featuresThread;
+    std::vector<float> floatSamples;
+    std::vector<float> mels;
+    std::vector<std::vector<float>> features;
 };
 
 void audioToMels(Settings &settings, State &state, std::vector<float> &samplesIn, std::vector<float> &melsOut) ;
