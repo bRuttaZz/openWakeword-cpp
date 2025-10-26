@@ -9,6 +9,8 @@
 
 #include <onnxruntime_cxx_api.h>
 
+#define OWW_RUNTIME_MODEL_PATH_PREFIX ""
+
 namespace oww { // openwakeword
 
 inline constexpr std::string instanceName = "openWakeWord";
@@ -21,8 +23,8 @@ inline constexpr size_t wwFeatures = 16;
 
 
 struct Settings {
-    std::filesystem::path melModelPath = std::filesystem::path("models/melspectrogram.onnx");
-    std::filesystem::path embModelPath = std::filesystem::path("models/embedding_model.onnx");
+    std::filesystem::path melModelPath;
+    std::filesystem::path embModelPath;
     std::vector<std::filesystem::path> wwModelPaths;
 
     size_t frameSize = 4 * chunkSamples;
@@ -44,10 +46,11 @@ struct State {
     std::vector<bool> featuresExhausted;
     std::vector<bool> featuresReady;
     size_t numReady;
+    bool inputStreamExhausted = false;
     bool samplesExhausted = false, melsExhausted = false;
     bool samplesReady = false, melsReady = false;
-    std::mutex mutSamples, mutMels, mutReady, mutOutput;
-    std::condition_variable cvSamples, cvMels, cvReady;
+    std::mutex mutSamples, mutMels, mutReady, mutOutput, mutDetection;
+    std::condition_variable cvSamples, cvMels, cvReady, cvDetection, cvStartAnalysis;
 
     State(size_t numWakeWords);
 };
@@ -58,13 +61,16 @@ struct RuntimeContext {
     std::vector<std::thread> wwThreads;
     std::thread melThread;
     std::thread featuresThread;
+    std::thread inputStreamThread;
     std::vector<float> floatSamples;
     std::vector<float> mels;
     std::vector<std::vector<float>> features;
+    size_t detection;
 };
 
+void feedAudio(oww::Settings &settings, oww::State &state, std::FILE *inputStream, std::vector<float> &floatSamplesOut);
 void audioToMels(Settings &settings, State &state, std::vector<float> &samplesIn, std::vector<float> &melsOut) ;
 void melsToFeatures(Settings &settings, State &state, std::vector<float> &melsIn, std::vector<std::vector<float>> &featuresOut);
-void featuresToOutput(Settings &settings, State &state, size_t wwIdx, std::vector<std::vector<float>> &featuresIn);
+void featuresToOutput(Settings &settings, State &state, size_t wwIdx, std::vector<std::vector<float>> &featuresIn, size_t &detections);
 
 } // namespace oww

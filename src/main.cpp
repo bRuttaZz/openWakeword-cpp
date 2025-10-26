@@ -2,6 +2,7 @@
 #include <cstring>
 #include <iostream>
 #include <openwakeword.h>
+#include "openwakeword.hpp"
 
 void ensureArg(int argc, char *argv[], int argi);
 void printUsage(char *argv[]);
@@ -9,8 +10,8 @@ void printUsage(char *argv[]);
 int main(int argc, char *argv[]) {
 
     // default model paths
-    char emb_path[] = "models/embedding_model.onnx";
-    char mel_path[] = "models/melspectrogram.onnx";
+    char emb_path[] = OWW_RUNTIME_MODEL_PATH_PREFIX "models/embedding_model.onnx";
+    char mel_path[] = OWW_RUNTIME_MODEL_PATH_PREFIX "models/melspectrogram.onnx";
 
     OwwConf conf = {
         NULL, 0, emb_path, mel_path, 0.5f, 4, 20, 4, 0
@@ -67,9 +68,25 @@ int main(int argc, char *argv[]) {
     int status = oww_init(&conf);
     if (status) {
         std::cerr << "Error initiating wakeword context: " << status << std::endl;
-        return 1;
+        return status;
     }
-    oww_wait_wakeword_from_file(input_file);
+    std::cerr << "[LOG] Ready" << std::endl;
+
+    status = oww_start_analysis_from_file(input_file);
+    if (status) {
+        std::cerr << "Error start audio feeding: " << status << std::endl;
+        return status;
+    }
+    while (true) {
+        status = oww_wait_for_detection();
+        if (status == -1) {
+            break;  // stream end
+        } else if (status < 0) {
+            std::cerr << "Error waiting for detections: " << status << std::endl;
+            break;
+        }
+        std::cerr << "Detected: [" << status << "] " << conf.wwd_model_paths[status] << std::endl;
+    }
     oww_cleanup();
     return 0;
 }

@@ -7,6 +7,7 @@
 #include <memory>
 #include <mutex>
 #include <numeric>
+#include <string>
 #include <vector>
 
 #include <onnxruntime_cxx_api.h>
@@ -27,6 +28,32 @@ oww::State::State(size_t numWakeWords)
         std::fill(featuresReady.begin(), featuresReady.end(), false);
     }
 
+void oww::feedAudio(oww::Settings &settings, oww::State &state, std::FILE *inputStream, std::vector<float> &floatSamplesOut) {
+    std::vector<int16_t> samples(settings.frameSize);
+    size_t framesRead = std::fread(samples.data(), sizeof(int16_t), settings.frameSize, inputStream);
+    while (framesRead > 0) {
+        {
+            // stop reading if interrupted!
+            std::unique_lock detectionStatusLock{state.mutDetection};
+            if (state.inputStreamExhausted)
+                return;
+        }
+        {
+            std::unique_lock lockSamples{state.mutSamples};
+            for (size_t i = 0; i < framesRead; i++) {
+                // NOTE: we do NOT normalize here
+                floatSamplesOut.push_back(static_cast<float>(samples[i]));
+            }
+            state.samplesReady = true;
+            state.cvSamples.notify_one();
+        }
+        framesRead = std::fread(samples.data(), sizeof(int16_t), settings.frameSize, inputStream);
+    }
+    {
+        std::unique_lock detectionStatusLock{state.mutDetection};
+        state.inputStreamExhausted = true;
+    }
+}
 
 void oww::audioToMels(oww::Settings &settings, oww::State &state, std::vector<float> &samplesIn, std::vector<float> &melsOut) {
     Ort::AllocatorWithDefaultOptions allocator;
@@ -45,7 +72,8 @@ void oww::audioToMels(oww::Settings &settings, oww::State &state, std::vector<fl
 
     {
         std::unique_lock lockReady(state.mutReady);
-        std::cerr << "[LOG] Loaded mel spectrogram model" << std::endl;
+        if (settings.debug)
+            std::cout << "[LOG] Loaded mel spectrogram model" << std::endl;
         state.numReady += 1;
         state.cvReady.notify_one();
     }
@@ -118,7 +146,8 @@ void oww::melsToFeatures(oww::Settings &settings, oww::State &state, std::vector
 
     {
         std::unique_lock lockReady(state.mutReady);
-        std::cerr << "[LOG] Loaded speech embedding model" << std::endl;
+        if (settings.debug)
+            std::cout << "[LOG] Loaded speech embedding model" << std::endl;
         state.numReady += 1;
         state.cvReady.notify_one();
     }
@@ -173,7 +202,7 @@ void oww::melsToFeatures(oww::Settings &settings, oww::State &state, std::vector
     }
 }
 
-void oww::featuresToOutput(oww::Settings &settings, oww::State &state, size_t wwIdx, std::vector<std::vector<float>> &featuresIn) {
+void oww::featuresToOutput(oww::Settings &settings, oww::State &state, size_t wwIdx, std::vector<std::vector<float>> &featuresIn, size_t &detectionOut) {
     Ort::AllocatorWithDefaultOptions allocator;
     auto memoryInfo = Ort::MemoryInfo::CreateCpu(OrtAllocatorType::OrtArenaAllocator, OrtMemType::OrtMemTypeDefault);
 
@@ -195,7 +224,8 @@ void oww::featuresToOutput(oww::Settings &settings, oww::State &state, size_t ww
 
     {
         std::unique_lock lockReady(state.mutReady);
-        std::cerr << "[LOG] Loaded " << wwName << " model" << std::endl;
+        if (settings.debug)
+            std::cout << "[LOG] Loaded " << wwName << " model" << std::endl;
         state.numReady += 1;
         state.cvReady.notify_one();
     }
@@ -236,10 +266,8 @@ void oww::featuresToOutput(oww::Settings &settings, oww::State &state, size_t ww
             for (size_t i = 0; i < wwOutCount; i++) {
                 auto probability = wwOutData[i];
                 if (settings.debug) {
-                    {
-                        std::unique_lock lockOutput(state.mutOutput);
-                        std::cerr << wwName << " " << probability << std::endl;
-                    }
+                    std::unique_lock lockOutput(state.mutOutput);
+                    std::cerr << wwName << " " << probability << std::endl;
                 }
 
                 if (probability > settings.threshold) {
@@ -247,9 +275,14 @@ void oww::featuresToOutput(oww::Settings &settings, oww::State &state, size_t ww
                     activation++;
                     if (activation >= settings.triggerLevel) {
                         // Trigger level reached
-                        {
+                        if (settings.debug){
                             std::unique_lock lockOutput(state.mutOutput);
-                            std::cout << wwName << std::endl;
+                            std::cerr << "Detected: " << wwName << std::endl;
+                        }
+                        {
+                            std::unique_lock detectionStatusLock{state.mutDetection};
+                            detectionOut = wwIdx;
+                            state.cvDetection.notify_one();
                         }
                         activation = -settings.refractory;
                     }
@@ -270,14 +303,19 @@ void oww::featuresToOutput(oww::Settings &settings, oww::State &state, size_t ww
     }
 }
 
+
 extern "C" {
     int oww_init(const OwwConf *oww_conf) {
         if (!oww_conf) return -1;
         if (!oww_conf->melspectrogram_model_path || !oww_conf->embedding_model_path)
             return -1;
+        if (!oww_conf->num_wwd_models) {
+            std::cerr << "No wakeword models were specified." << std::endl;
+            return -2;
+        }
 
         // Re-open stdin/stdout in binary mode
-        freopen(NULL, "rb", stdin);
+        std::freopen(nullptr, "rb", stdin);
 
         std::string melModelPathS(oww_conf->melspectrogram_model_path);
         std::string embModelPathS(oww_conf->embedding_model_path);
@@ -285,7 +323,6 @@ extern "C" {
         for (size_t i=0; i<oww_conf->num_wwd_models; i++) {
             if (!oww_conf->wwd_model_paths[i])
                 continue;
-            std::cout<< "File: "<< oww_conf->wwd_model_paths[i] << std::endl;
             std::string path(oww_conf->wwd_model_paths[i]);
             wwModelPaths.emplace_back(path);
         }
@@ -313,6 +350,7 @@ extern "C" {
         ctx.floatSamples.clear();
         ctx.mels.clear();
         ctx.features.resize(numWakeWords);
+        ctx.detection = -3;
 
         ctx.melThread = std::thread(oww::audioToMels, std::ref(*ctx.settings), std::ref(*ctx.state), std::ref(ctx.floatSamples), std::ref(ctx.mels));
         ctx.featuresThread = std::thread(oww::melsToFeatures, std::ref(*ctx.settings), std::ref(*ctx.state), std::ref(ctx.mels), std::ref(ctx.features));
@@ -320,7 +358,7 @@ extern "C" {
         ctx.wwThreads.clear();
         for (size_t i = 0; i < numWakeWords; i++) {
             ctx.wwThreads.emplace_back(
-                oww::featuresToOutput, std::ref(*ctx.settings), std::ref(*ctx.state), i, std::ref(ctx.features)
+                oww::featuresToOutput, std::ref(*ctx.settings), std::ref(*ctx.state), i, std::ref(ctx.features), std::ref(ctx.detection)
             );
         }
 
@@ -335,12 +373,14 @@ extern "C" {
                 }
             );
         }
-        std::cerr << "[LOG] Ready" << std::endl;
 
         return 0;
     }
 
     void oww_cleanup() {
+        // stop analysis if any
+        oww_stop_analysis();
+
         // Signal mel thread that samples have been exhausted
         {
             std::unique_lock lockSamples{ctx.state->mutSamples};
@@ -359,15 +399,14 @@ extern "C" {
         }
         ctx.featuresThread.join();
 
-        size_t numWakeWords = ctx.settings->wwModelPaths.size();
         // Signal wake word threads that features have been exhausted
+        size_t numWakeWords = ctx.settings->wwModelPaths.size();
         for (size_t i = 0; i < numWakeWords; i++) {
             std::unique_lock lockFeatures{ctx.state->mutFeatures[i]};
             ctx.state->featuresExhausted[i] = true;
             ctx.state->featuresReady[i] = true;
             ctx.state->cvFeatures[i].notify_one();
         }
-
         for (size_t i = 0; i < numWakeWords; i++) {
             ctx.wwThreads[i].join();
         }
@@ -376,25 +415,45 @@ extern "C" {
         ctx.settings.reset();
     }
 
-    int oww_wait_wakeword_from_file(FILE *file) {
+    int oww_start_analysis_from_file(FILE *file) {
         if (!file)
             file = stdin;
+        if (ctx.inputStreamThread.joinable()) {
+            std::cerr << "Error adding new audio stream feed. One audio stream feed is active" << std::endl;
+            return -1;
+        }
+        ctx.state->inputStreamExhausted = false;
+        ctx.inputStreamThread = std::thread(oww::feedAudio, std::ref(*ctx.settings), std::ref(*ctx.state), file, std::ref(ctx.floatSamples));
+        return 0;
+    }
 
-        std::vector<int16_t> samples(ctx.settings->frameSize);
-        size_t framesRead = std::fread(samples.data(), sizeof(int16_t), ctx.settings->frameSize, file);
-        while (framesRead > 0) {
-            {
-                std::unique_lock lockSamples{ctx.state->mutSamples};
-                for (size_t i = 0; i < framesRead; i++) {
-                    // NOTE: we do NOT normalize here
-                    ctx.floatSamples.push_back(static_cast<float>(samples[i]));
-                }
-                ctx.state->samplesReady = true;
-                ctx.state->cvSamples.notify_one();
-            }
-            framesRead = std::fread(samples.data(), sizeof(int16_t), ctx.settings->frameSize, file);
+    void oww_stop_analysis() {
+        if (!ctx.inputStreamThread.joinable())
+            return;
+        {
+            std::unique_lock detectionStatusLock{ctx.state->mutDetection};
+            ctx.state->inputStreamExhausted = true;
+            ctx.state->cvDetection.notify_one();
+        }
+        ctx.inputStreamThread.join();
+        return;
+    }
+
+    int oww_wait_for_detection() {
+        if (!ctx.inputStreamThread.joinable()) {
+            std::cerr << "Error calling wait_for_detection. no inputStreamThread is alive" << std::endl;
+            return -2;
         }
 
-        return 1;
+        {
+            std::unique_lock detectionStatusLock{ctx.state->mutDetection};
+            if (ctx.state->inputStreamExhausted)
+                return -1;
+
+            ctx.state->cvDetection.wait(detectionStatusLock);
+            size_t wwIdx = ctx.detection;
+            ctx.detection = -3;
+            return wwIdx;
+        }
     }
 }

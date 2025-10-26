@@ -26,6 +26,7 @@ typedef struct {
 
 /**
  * Initialize wwd runtime with given configs
+ * @return int - 0: on success, negative-integer: on error
  */
 int oww_init(const OwwConf *oww_conf);
 
@@ -35,17 +36,29 @@ int oww_init(const OwwConf *oww_conf);
 void oww_cleanup();
 
 /**
- * Wait for wakeword invocation from microphone. Uses portaudio to get microphone input.
- * @return int - 1: on successful model invocation, 0: for initialization errors, -1: for microphone device indentifcation errors
+ * Start wakeword analysis pipeline from a file. Ideal for analysisn stdin
+ * @return int - -1: on error, 0: on successfully start the feeding.
  */
-int oww_wait_wakeword_from_mic();
+int oww_start_analysis_from_file(FILE* file);
 
 /**
- * Wait for wakeword invocation from file description.
- * @param file - file descriptor to read PCM data frames from
- * @return int - 1: on successful model invocation, 0: for initialization errors, -1: file read errors
+ * Start wakeword analysis pipeline from default system microphone.
+ * @return int - -1: on error, 0: on successfully start the feeding.
  */
-int oww_wait_wakeword_from_file(FILE* file);
+int oww_start_analysis_from_mic();
+
+/**
+ * Stop wakeword analysis pipeline
+ */
+void oww_stop_analysis();
+
+/**
+ * Wait for wakeword detection from pipeline.
+ * @return int - -1: end of stream. -2: called without starting an analyser, -3: internal error,
+ *      0/positive-integer - class name of detected class
+ */
+int oww_wait_for_detection();
+
 
 
 #ifdef __cplusplus
