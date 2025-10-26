@@ -1,9 +1,9 @@
 *.onnx
+*.raw
 .cache
 build
 dist
 
 /libs
-models
 
 misc

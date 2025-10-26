@@ -33,3 +33,9 @@ install(DIRECTORY ${CMAKE_SOURCE_DIR}/libs/onnx/lib/ DESTINATION lib)
 install(DIRECTORY ${CMAKE_SOURCE_DIR}/include/ DESTINATION include)
 install(DIRECTORY ${CMAKE_SOURCE_DIR}/models/ DESTINATION models)
 install(FILES ${CMAKE_SOURCE_DIR}/LICENSE DESTINATION .)
+
+if(NOT MSVC)
+    target_compile_options(openwakeword PRIVATE
+        $<$<CONFIG:Debug>:-Wall -Wextra -Wpedantic -Werror>
+    )
+endif()
