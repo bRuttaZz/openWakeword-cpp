@@ -17,12 +17,6 @@ libs/onnx:
 	    https://github.com/microsoft/onnxruntime/releases/download/v$(ONNX_VERSION)/onnxruntime-$(OS)-$(ARCH)-$(ONNX_VERSION).tgz
 	tar xvzf libs/onnx/onnxruntime.tgz -C libs/onnx/ --strip-components=1
 
-libs/gst:
-	@pkg-config --cflags --libs gstreamer-1.0 1>/dev/null 2>/dev/null || { \
-	    echo "\nGstreamer Not found! Make sure Gstreamer libraries are available" 1>&2 && \
-		exit 1; \
-	}
-
 models:
 	@echo "\nDownloading onnx models.."
 	mkdir -p models
@@ -32,7 +26,7 @@ models:
 	wget -q -O models/embedding_model.onnx https://github.com/dscripka/openWakeWord/releases/download/v0.5.1/embedding_model.onnx
 	@echo "Downloaded all onnx models.."
 
-setup: libs/onnx libs/gst models	## Setup libraries
+setup: libs/onnx models	## Setup libraries
 	@echo "\nConfigure.."
 	cmake -S . -B build
 
