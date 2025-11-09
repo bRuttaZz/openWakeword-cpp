@@ -101,11 +101,11 @@ int main(int argc, char *argv[]) {
         }
         if (usr_cmd) {
             if (verbose)
-                std::cerr << std::format(d_log, status, conf.wwd_model_paths[status]) << std::endl;
+                std::cerr << std::format(d_log, status, conf.wwd_model_paths[status]);
             const int status = system(usr_cmd);
             if (status) return status;
         } else {
-            std::cerr << std::format(d_log, status, conf.wwd_model_paths[status]) << std::endl;
+            std::cerr << std::format(d_log, status, conf.wwd_model_paths[status]);
         }
     }
     oww_cleanup();

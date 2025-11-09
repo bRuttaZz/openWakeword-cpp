@@ -40,6 +40,9 @@ options:
 ```sh
 # read from ALSA input (for Linux Ofc)
 arecord -r 16000 -c 1 -f S16_LE -t raw - | openwakeword --model misc/sheila_v2.onnx
+# or using pipwire
+pw-cat --record --format s16 --channels 1 --rate 16000 - | ./build/openwakeword --model misc/sheila_v2.onnx
+# I mean feel free to use any feeder
 
 # or exececute a command on detection time instead
 arecord -r 16000 -c 1 -f S16_LE -t raw - | openwakeword --model misc/sheila_v2.onnx --silent -e "echo 'I aint Jarvis'"
