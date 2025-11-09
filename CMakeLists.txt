@@ -19,16 +19,20 @@ find_package(Threads REQUIRED)
 file(GLOB SRC_FILES "src/*.cpp")
 
 add_executable(openwakeword ${SRC_FILES})
-
 target_link_libraries(openwakeword PRIVATE onnxruntime Threads::Threads)
-
 # Ensure runtime can find shared libraries
 set_target_properties(openwakeword PROPERTIES
     BUILD_RPATH "$ORIGIN"
     INSTALL_RPATH "$ORIGIN:$ORIGIN/../lib"
 )
 
+# --- Shared library target (C-compatible) ---
+add_library(libopenwakeword SHARED ${SRC_FILES})
+target_link_libraries(libopenwakeword PRIVATE onnxruntime Threads::Threads)
+set_target_properties(libopenwakeword PROPERTIES OUTPUT_NAME "openwakeword")
+
 install(TARGETS openwakeword RUNTIME DESTINATION bin)
+install(TARGETS libopenwakeword LIBRARY DESTINATION lib)
 install(DIRECTORY ${CMAKE_SOURCE_DIR}/libs/onnx/lib/ DESTINATION lib)
 install(DIRECTORY ${CMAKE_SOURCE_DIR}/include/ DESTINATION include)
 install(DIRECTORY ${CMAKE_SOURCE_DIR}/models/ DESTINATION models)
@@ -36,6 +40,9 @@ install(FILES ${CMAKE_SOURCE_DIR}/LICENSE DESTINATION .)
 
 if(NOT MSVC)
     target_compile_options(openwakeword PRIVATE
+        $<$<CONFIG:Debug>:-Wall -Wextra -Wpedantic -Werror>
+    )
+    target_compile_options(libopenwakeword PRIVATE
         $<$<CONFIG:Debug>:-Wall -Wextra -Wpedantic -Werror>
     )
 endif()
