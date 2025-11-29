@@ -75,7 +75,6 @@ struct State {
 
 // Runtime context objects
 struct RuntimeContext {
-    bool micEnabled;
     std::shared_ptr<Settings> settings;
     std::shared_ptr<AudioQueue> micQueue;
     std::shared_ptr<State> state;
@@ -87,12 +86,21 @@ struct RuntimeContext {
     std::vector<float> mels;
     std::vector<std::vector<float>> features;
     size_t detection;
-    PaStream* micStream;
 };
 
-bool openMicStream(AudioQueue& queue, PaStream*& stream, size_t frameSize);
-bool startMicStream(PaStream* stream);
-void stopMicStream(PaStream* stream);
+// Portaudio handler
+class PortAudioHandler {
+private:
+    PaStream* stream;
+    PaError err;
+    bool started = false;
+    bool initialized = false;
+
+public:
+    bool openMicStream(oww::AudioQueue &queue, size_t frameSize, bool verbose);
+    bool startMicStream();
+    void stopMicStream();
+};
 
 void feedAudioFromFile(Settings &settings, oww::State &state, std::FILE *inputStream, std::vector<float> &floatSamplesOut);
 void feedAudioFromMic(State &state, AudioQueue& queue, std::vector<float> &floatSamplesOut);

@@ -17,6 +17,7 @@
 #include "./openwakeword.hpp"
 
 static oww::RuntimeContext ctx;
+static oww::PortAudioHandler micHandler;
 
 oww::State::State(size_t numWakeWords)
     :mutFeatures(numWakeWords), cvFeatures(numWakeWords),
@@ -394,10 +395,7 @@ extern "C" {
         ctx.mels.clear();
         ctx.features.resize(numWakeWords);
         ctx.detection = -3;
-
-        ctx.micEnabled = false;
         ctx.micQueue = nullptr;
-        ctx.micStream = nullptr;
 
         ctx.melThread = std::thread(oww::audioToMels, std::ref(*ctx.settings), std::ref(*ctx.state), std::ref(ctx.floatSamples), std::ref(ctx.mels));
         ctx.featuresThread = std::thread(oww::melsToFeatures, std::ref(*ctx.settings), std::ref(*ctx.state), std::ref(ctx.mels), std::ref(ctx.features));
@@ -480,17 +478,14 @@ extern "C" {
             return -1;
         }
 
-        ctx.micEnabled = false;
         ctx.micQueue = std::make_shared<oww::AudioQueue>(100);
-        ctx.micStream = nullptr;
-        if (!oww::openMicStream(*ctx.micQueue, ctx.micStream, ctx.settings->frameSize)) {
+        if (!micHandler.openMicStream(*ctx.micQueue, ctx.settings->frameSize, ctx.settings->debug)) {
             return -2;
         }
-        ctx.micEnabled = true;
 
         ctx.state->inputStreamExhausted = false;
         ctx.inputStreamThread = std::thread(oww::feedAudioFromMic, std::ref(*ctx.state), std::ref(*ctx.micQueue), std::ref(ctx.floatSamples));
-        if (!oww::startMicStream(ctx.micStream)) {
+        if (!micHandler.startMicStream()) {
             return -2;
         }
         if (ctx.settings->debug) {
@@ -502,20 +497,14 @@ extern "C" {
     void oww_stop_analysis() {
         if (!ctx.inputStreamThread.joinable())
             return;
-        if (ctx.micEnabled)
-            oww::stopMicStream(ctx.micStream);
+        micHandler.stopMicStream();
         {
             std::unique_lock detectionStatusLock{ctx.state->mutDetection};
             ctx.state->inputStreamExhausted = true;
             ctx.state->cvDetection.notify_one();
         }
         ctx.inputStreamThread.join();
-
-        if (ctx.micEnabled) {
-            ctx.micStream = nullptr;
-            ctx.micQueue.reset();
-        }
-        ctx.micEnabled = false;
+        ctx.micQueue.reset();
         return;
     }
 
