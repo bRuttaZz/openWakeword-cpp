@@ -17,7 +17,7 @@ int main(int argc, char *argv[]) {
     char mel_path[] = OWW_RUNTIME_MODEL_PATH_PREFIX "models/melspectrogram.onnx";
 
     OwwConf conf = {
-        NULL, 0, emb_path, mel_path, 0.5f, 4, 20, 4, 0
+        NULL, 0, emb_path, mel_path, 0.5f, 4, 20, 4, 0, 0
     };
     char *custom_file = NULL;
     char *usr_cmd = NULL;
@@ -39,6 +39,8 @@ int main(int argc, char *argv[]) {
             conf.wwd_model_paths = new_paths;
             conf.wwd_model_paths[conf.num_wwd_models] = strdup(argv[++i]);
             conf.num_wwd_models++;
+        } else if (arg == "-d" || arg == "--mic") {
+            conf.use_mic = 1;
         } else if (arg == "-f" || arg == "--file") {
             ensureArg(argc, argv, i);
             custom_file = argv[++i];
@@ -86,7 +88,11 @@ int main(int argc, char *argv[]) {
     }
     if (verbose) std::cerr << "[LOG] Ready" << std::endl;
 
-    status = oww_start_analysis_from_file(input_file);
+    if (conf.use_mic) {
+        status = oww_start_analysis_from_mic();
+    } else {
+        status = oww_start_analysis_from_file(input_file);
+    }
     if (status) {
         if (verbose) std::cerr << "Error start audio feeding: " << status << std::endl;
         return status;
@@ -116,6 +122,9 @@ void printUsage(char *argv[]) {
     std::cerr << std::endl;
     std::cerr << "usage: " << argv[0] << " [options]" << std::endl;
     std::cerr << std::endl;
+    std::cerr << "Detect wake-word invocations from audio input. By default, audio is read from stdin. "
+                "Use '-f' to read from a raw file or '-d' to read from the system's default microphone." << std::endl;
+    std::cerr << std::endl;
     std::cerr << "options:" << std::endl;
 
     std::cerr << "   -h        --help                  show this message and exit"
@@ -126,10 +135,13 @@ void printUsage(char *argv[]) {
             "for multiple models)"
     << std::endl;
 
+    std::cerr << "   -d        --mic                   read from default microphone of system "
+    <<std::endl;
+
     std::cerr << "   -f  FILE  --file           FILE   path to raw pcm data file "
     << std::endl;
 
-    std::cerr << "   -e  CMD   --exec           CMD    Command to be executed on detection time."
+    std::cerr << "   -e  CMD   --exec           CMD    command to be executed on detection time."
     << std::endl;
 
     std::cerr << "   -t  NUM   --threshold      NUM    threshold for activation (0-1, "

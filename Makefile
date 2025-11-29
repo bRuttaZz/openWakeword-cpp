@@ -4,6 +4,7 @@ ARCH ?= x64
 
 ONNX_VERSION ?= 1.23.1
 
+# BUILD_TYPE: Release | Debug
 BUILD_TYPE ?= Release
 PACKAGE_DIR ?= dist
 

@@ -1,3 +1,4 @@
+#include <cstdint>
 #include <stdio.h>
 #include <stdint.h>
 
@@ -21,6 +22,7 @@ typedef struct {
     uint8_t refractory;                         // number of steps after activation to wait (default: 20)
     uint8_t step_frames;                        // number of 80 ms audio chunks to process at a time (default: 4)
     uint8_t debug;                              // print model probabilities to stderr
+    uint8_t use_mic;                            // read from system microphone
 } OwwConf;
 
 
@@ -37,13 +39,13 @@ void oww_cleanup();
 
 /**
  * Start wakeword analysis pipeline from a file. Ideal for analysisn stdin
- * @return int - -1: on error, 0: on successfully start the feeding.
+ * @return int - <0: on error, 0: on successfully start the feeding.
  */
 int oww_start_analysis_from_file(FILE* file);
 
 /**
  * Start wakeword analysis pipeline from default system microphone.
- * @return int - -1: on error, 0: on successfully start the feeding.
+ * @return int - <0: on error, 0: on successfully start the feeding.
  */
 int oww_start_analysis_from_mic();
 

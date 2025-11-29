@@ -18,8 +18,15 @@ find_package(Threads REQUIRED)
 
 file(GLOB SRC_FILES "src/*.cpp")
 
+
+# Executable
 add_executable(openwakeword ${SRC_FILES})
 target_link_libraries(openwakeword PRIVATE onnxruntime Threads::Threads)
+
+# TODO thing (improve portaudio link scripts)
+target_include_directories(openwakeword PRIVATE /usr/include)
+target_link_libraries(openwakeword PRIVATE portaudio)
+
 # Ensure runtime can find shared libraries
 set_target_properties(openwakeword PROPERTIES
     BUILD_RPATH "$ORIGIN"
@@ -30,6 +37,9 @@ set_target_properties(openwakeword PROPERTIES
 add_library(libopenwakeword SHARED ${SRC_FILES})
 target_link_libraries(libopenwakeword PRIVATE onnxruntime Threads::Threads)
 set_target_properties(libopenwakeword PROPERTIES OUTPUT_NAME "openwakeword")
+# TODO thing (improve portaudio link scripts)
+target_include_directories(libopenwakeword PRIVATE /usr/include)
+target_link_libraries(libopenwakeword PRIVATE portaudio)
 
 install(TARGETS openwakeword RUNTIME DESTINATION bin)
 install(TARGETS libopenwakeword LIBRARY DESTINATION lib)

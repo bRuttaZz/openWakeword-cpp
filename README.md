@@ -9,9 +9,10 @@ Implementation of [dscripka/openWakeWord](https://github.com/dscripka/openWakeWo
 
 ### Input Audio Specs (fmt: PCM)
 * sample rate: 16000 Hz  (16kHz)
-* bit depth: 16-bit
+* bit depth: 16-bit 
 * channels: 1
 * minimal frame length: 80 ms
+* bit format: s16_le
 
 ### C Library headers
 - [openwakeword.h](./include/openwakeword.h)

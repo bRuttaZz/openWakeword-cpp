@@ -1,27 +1,44 @@
 #pragma once
 
 #include <condition_variable>
+#include <cstddef>
 #include <cstdio>
 #include <filesystem>
 #include <memory>
 #include <mutex>
 #include <vector>
+#include <queue>
 
 #include <onnxruntime_cxx_api.h>
+#include <portaudio.h>
 
 #define OWW_RUNTIME_MODEL_PATH_PREFIX ""
 
 namespace oww { // openwakeword
 
 inline constexpr std::string instanceName = "openWakeWord";
-inline constexpr size_t chunkSamples = 1280; // 80 ms
+inline constexpr double default_sample_rate = 16000.0;
+inline constexpr size_t chunkSamples = 1280; // 80 ms (frame length)
 inline constexpr size_t numMels = 32;
 inline constexpr size_t embWindowSize = 76; // 775 ms
 inline constexpr size_t embStepSize = 8;    // 80 ms
 inline constexpr size_t embFeatures = 96;
 inline constexpr size_t wwFeatures = 16;
 
+class AudioQueue {
+private:
+    std::queue<std::vector<std::int16_t>> q;
+    size_t max_queue_len;
+    std::mutex mtx;
+    std::condition_variable cv;
 
+public:
+    AudioQueue(size_t queue_len) : max_queue_len(queue_len) {};
+    void push(const std::vector<std::int16_t>& data);
+    std::vector<std::int16_t> pop();
+};
+
+// Configurables
 struct Settings {
     std::filesystem::path melModelPath;
     std::filesystem::path embModelPath;
@@ -39,6 +56,7 @@ struct Settings {
     Ort::SessionOptions options;
 };
 
+// Share process states
 struct State {
     Ort::Env env;
     std::vector<std::mutex> mutFeatures;
@@ -55,8 +73,11 @@ struct State {
     State(size_t numWakeWords);
 };
 
+// Runtime context objects
 struct RuntimeContext {
+    bool micEnabled;
     std::shared_ptr<Settings> settings;
+    std::shared_ptr<AudioQueue> micQueue;
     std::shared_ptr<State> state;
     std::vector<std::thread> wwThreads;
     std::thread melThread;
@@ -66,9 +87,15 @@ struct RuntimeContext {
     std::vector<float> mels;
     std::vector<std::vector<float>> features;
     size_t detection;
+    PaStream* micStream;
 };
 
-void feedAudio(oww::Settings &settings, oww::State &state, std::FILE *inputStream, std::vector<float> &floatSamplesOut);
+bool openMicStream(AudioQueue& queue, PaStream*& stream, size_t frameSize);
+bool startMicStream(PaStream* stream);
+void stopMicStream(PaStream* stream);
+
+void feedAudioFromFile(Settings &settings, oww::State &state, std::FILE *inputStream, std::vector<float> &floatSamplesOut);
+void feedAudioFromMic(State &state, AudioQueue& queue, std::vector<float> &floatSamplesOut);
 void audioToMels(Settings &settings, State &state, std::vector<float> &samplesIn, std::vector<float> &melsOut) ;
 void melsToFeatures(Settings &settings, State &state, std::vector<float> &melsIn, std::vector<std::vector<float>> &featuresOut);
 void featuresToOutput(Settings &settings, State &state, size_t wwIdx, std::vector<std::vector<float>> &featuresIn, size_t &detections);

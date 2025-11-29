@@ -7,10 +7,12 @@
 #include <memory>
 #include <mutex>
 #include <numeric>
+#include <ostream>
 #include <string>
 #include <vector>
 
 #include <onnxruntime_cxx_api.h>
+#include <portaudio.h>
 #include <openwakeword.h>
 #include "./openwakeword.hpp"
 
@@ -28,7 +30,8 @@ oww::State::State(size_t numWakeWords)
         std::fill(featuresReady.begin(), featuresReady.end(), false);
     }
 
-void oww::feedAudio(oww::Settings &settings, oww::State &state, std::FILE *inputStream, std::vector<float> &floatSamplesOut) {
+
+void oww::feedAudioFromFile(oww::Settings &settings, oww::State &state, std::FILE *inputStream, std::vector<float> &floatSamplesOut) {
     std::vector<int16_t> samples(settings.frameSize);
     size_t framesRead = std::fread(samples.data(), sizeof(int16_t), settings.frameSize, inputStream);
     while (framesRead > 0) {
@@ -53,6 +56,33 @@ void oww::feedAudio(oww::Settings &settings, oww::State &state, std::FILE *input
         std::unique_lock detectionStatusLock{state.mutDetection};
         state.inputStreamExhausted = true;
     }
+}
+
+void oww::feedAudioFromMic(oww::State &state, AudioQueue& queue, std::vector<float> &floatSamplesOut) {
+    FILE* file = std::fopen("port_audio_test.raw", "wb"); // TODO: put for debugging to be removed !!
+    while (true) {
+        std::vector<int16_t> samples = queue.pop();
+        size_t framesRead = samples.size();
+
+        std::fwrite(samples.data(), sizeof(int16_t), framesRead, file);
+
+        {
+            // stop reading if interrupted!
+            std::unique_lock detectionStatusLock{state.mutDetection};
+            if (state.inputStreamExhausted)
+                return;
+        }
+        {
+            std::unique_lock lockSamples{state.mutSamples};
+            for (size_t i=0; i<framesRead; i++) {
+                floatSamplesOut.push_back(static_cast<float>(samples[i]));
+            }
+            state.samplesReady = true;
+            state.cvSamples.notify_one();
+        }
+    }
+    std::fflush(file);
+    std::fclose(file);
 }
 
 void oww::audioToMels(oww::Settings &settings, oww::State &state, std::vector<float> &samplesIn, std::vector<float> &melsOut) {
@@ -307,11 +337,20 @@ void oww::featuresToOutput(oww::Settings &settings, oww::State &state, size_t ww
 extern "C" {
     int oww_init(const OwwConf *oww_conf) {
         if (!oww_conf) return -1;
-        if (!oww_conf->melspectrogram_model_path || !oww_conf->embedding_model_path)
+        if (!oww_conf->melspectrogram_model_path || !oww_conf->embedding_model_path) {
+            std::cerr << "Melspectrogram-model or Embedding-model not provided" << std::endl;
             return -1;
+        }
+        if (
+            !std::filesystem::exists(oww_conf->melspectrogram_model_path) ||
+            !std::filesystem::exists(oww_conf->embedding_model_path)
+        ) {
+            std::cerr << "Model(s) not found: " << oww_conf->melspectrogram_model_path << " or " << oww_conf->embedding_model_path << std::endl;
+            return -2;
+        }
         if (!oww_conf->num_wwd_models) {
             std::cerr << "No wakeword models were specified." << std::endl;
-            return -2;
+            return -1;
         }
 
         // Re-open stdin/stdout in binary mode
@@ -324,6 +363,10 @@ extern "C" {
             if (!oww_conf->wwd_model_paths[i])
                 continue;
             std::string path(oww_conf->wwd_model_paths[i]);
+            if (!std::filesystem::exists(path)) {
+                std::cerr << "Model not found: " << path << std::endl;
+                return -2;
+            }
             wwModelPaths.emplace_back(path);
         }
 
@@ -351,6 +394,10 @@ extern "C" {
         ctx.mels.clear();
         ctx.features.resize(numWakeWords);
         ctx.detection = -3;
+
+        ctx.micEnabled = false;
+        ctx.micQueue = nullptr;
+        ctx.micStream = nullptr;
 
         ctx.melThread = std::thread(oww::audioToMels, std::ref(*ctx.settings), std::ref(*ctx.state), std::ref(ctx.floatSamples), std::ref(ctx.mels));
         ctx.featuresThread = std::thread(oww::melsToFeatures, std::ref(*ctx.settings), std::ref(*ctx.state), std::ref(ctx.mels), std::ref(ctx.features));
@@ -423,19 +470,52 @@ extern "C" {
             return -1;
         }
         ctx.state->inputStreamExhausted = false;
-        ctx.inputStreamThread = std::thread(oww::feedAudio, std::ref(*ctx.settings), std::ref(*ctx.state), file, std::ref(ctx.floatSamples));
+        ctx.inputStreamThread = std::thread(oww::feedAudioFromFile, std::ref(*ctx.settings), std::ref(*ctx.state), file, std::ref(ctx.floatSamples));
+        return 0;
+    }
+
+    int oww_start_analysis_from_mic() {
+        if (ctx.inputStreamThread.joinable()) {
+            std::cerr << "Error adding new audio stream feed. One audio stream feed is active" << std::endl;
+            return -1;
+        }
+
+        ctx.micEnabled = false;
+        ctx.micQueue = std::make_shared<oww::AudioQueue>(100);
+        ctx.micStream = nullptr;
+        if (!oww::openMicStream(*ctx.micQueue, ctx.micStream, ctx.settings->frameSize)) {
+            return -2;
+        }
+        ctx.micEnabled = true;
+
+        ctx.state->inputStreamExhausted = false;
+        ctx.inputStreamThread = std::thread(oww::feedAudioFromMic, std::ref(*ctx.state), std::ref(*ctx.micQueue), std::ref(ctx.floatSamples));
+        if (!oww::startMicStream(ctx.micStream)) {
+            return -2;
+        }
+        if (ctx.settings->debug) {
+            std::cerr << "Audio stream initiated!" << std::endl;
+        }
         return 0;
     }
 
     void oww_stop_analysis() {
         if (!ctx.inputStreamThread.joinable())
             return;
+        if (ctx.micEnabled)
+            oww::stopMicStream(ctx.micStream);
         {
             std::unique_lock detectionStatusLock{ctx.state->mutDetection};
             ctx.state->inputStreamExhausted = true;
             ctx.state->cvDetection.notify_one();
         }
         ctx.inputStreamThread.join();
+
+        if (ctx.micEnabled) {
+            ctx.micStream = nullptr;
+            ctx.micQueue.reset();
+        }
+        ctx.micEnabled = false;
         return;
     }
 
