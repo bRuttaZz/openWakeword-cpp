@@ -18,16 +18,25 @@ libs/onnx:
 	    https://github.com/microsoft/onnxruntime/releases/download/v$(ONNX_VERSION)/onnxruntime-$(OS)-$(ARCH)-$(ONNX_VERSION).tgz
 	tar xvzf libs/onnx/onnxruntime.tgz -C libs/onnx/ --strip-components=1
 
+libs/portaudio:
+	@echo "\nEnsuring portaudio libraries.."
+	mkdir -p libs
+	wget -q -O libs/portaudio.zip \
+		"https://github.com/PortAudio/portaudio/archive/refs/heads/master.zip"
+	unzip libs/portaudio.zip -d libs/
+	$(RM) libs/portaudio.zip
+	mv libs/portaudio-master libs/portaudio
+
 models:
 	@echo "\nDownloading onnx models.."
 	mkdir -p models
 	@echo "\nDownloading models/meslspectogram.onnx"
 	wget -q -O models/melspectrogram.onnx https://github.com/dscripka/openWakeWord/releases/download/v0.5.1/melspectrogram.onnx
-	@echo "\nDownloading models/meslspectogram.onnx"
+	@echo "\nDownloading models/embedding_model.onnx"
 	wget -q -O models/embedding_model.onnx https://github.com/dscripka/openWakeWord/releases/download/v0.5.1/embedding_model.onnx
 	@echo "Downloaded all onnx models.."
 
-setup: libs/onnx models	## Setup libraries
+setup: libs/onnx models libs/portaudio	## Setup libraries
 	@echo "\nConfigure.."
 	cmake -S . -B build
 

@@ -3,12 +3,10 @@
 #include <queue>
 #include <mutex>
 #include <vector>
-#include <fstream>
 #include <condition_variable>
 #include <portaudio.h>
 #include "./openwakeword.hpp"
 
-std::ofstream outfile("mic_output.raw", std::ios::binary);
 
 static int _audioCallback(const void* inputBuffer, void* outputBuffer, unsigned long framesPerBuffer, const PaStreamCallbackTimeInfo* timeInfo, PaStreamCallbackFlags statusFlags, void* userData) {
     (void)outputBuffer;
@@ -23,8 +21,6 @@ static int _audioCallback(const void* inputBuffer, void* outputBuffer, unsigned 
 
     std::vector<int16_t> frame(in, in + framesPerBuffer);
     audioQueue->push(frame);
-
-    outfile.write(reinterpret_cast<const char*>(frame.data()), frame.size() * sizeof(int16_t));
 
     return paContinue;
 }
@@ -51,6 +47,13 @@ bool oww::PortAudioHandler::openMicStream(oww::AudioQueue &queue, size_t frameSi
         std::cerr << "ERROR: portaudio context already initialized!" << std::endl;
         return false;
     }
+
+    // aah yeah some dirty log suppression
+    auto old_stderr = dup(fileno(stderr));
+    if (!verbose) {
+        freopen("/dev/null", "w", stderr);
+    }
+
     err = Pa_Initialize();
     if (err != paNoError) {
         std::cerr << "ERROR: error initializing portaudio: " << Pa_GetErrorText(err) << std::endl;
@@ -62,6 +65,12 @@ bool oww::PortAudioHandler::openMicStream(oww::AudioQueue &queue, size_t frameSi
     if (err != paNoError) {
         std::cerr << "ERROR: error opening audio input stream: " << Pa_GetErrorText(err) << std::endl;
         return false;
+    }
+
+    fflush(stderr);
+    if (!verbose) {
+        dup2(old_stderr, fileno(stderr));
+        close(old_stderr);
     }
 
     initialized = true;
