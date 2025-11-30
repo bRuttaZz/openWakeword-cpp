@@ -332,6 +332,11 @@ void oww::featuresToOutput(oww::Settings &settings, oww::State &state, size_t ww
             numBufferedFeatures = todoFeatures.size() / oww::embFeatures;
         }
     }
+    {
+        std::unique_lock detectionStatusLock{state.mutDetection};
+        detectionOut = -1; // end of stream
+        state.cvDetection.notify_one();
+    }
 }
 
 
@@ -513,13 +518,15 @@ extern "C" {
             std::cerr << "Error calling wait_for_detection. no inputStreamThread is alive" << std::endl;
             return -2;
         }
-
         {
             std::unique_lock detectionStatusLock{ctx.state->mutDetection};
-            if (ctx.state->inputStreamExhausted)
-                return -1;
-
-            ctx.state->cvDetection.wait(detectionStatusLock);
+            if (ctx.state->inputStreamExhausted) return -1;
+            while (true) {
+                if (ctx.state->cvDetection.wait_for(detectionStatusLock, std::chrono::seconds(1)) == std::cv_status::timeout){
+                    if (ctx.state->inputStreamExhausted) return -1;
+                    else continue;
+                } else break;
+            }
             size_t wwIdx = ctx.detection;
             ctx.detection = -3;
             return wwIdx;
