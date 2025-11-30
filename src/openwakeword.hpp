@@ -2,10 +2,12 @@
 
 #include <condition_variable>
 #include <cstddef>
+#include <cstdint>
 #include <cstdio>
 #include <filesystem>
 #include <memory>
 #include <mutex>
+#include <string>
 #include <vector>
 #include <queue>
 
@@ -44,6 +46,8 @@ struct Settings {
     std::filesystem::path embModelPath;
     std::vector<std::filesystem::path> wwModelPaths;
 
+    bool debug = false;
+
     size_t frameSize = 4 * chunkSamples;
     size_t stepFrames = 4;
 
@@ -51,7 +55,7 @@ struct Settings {
     int triggerLevel = 4;
     int refractory = 20;
 
-    bool debug = false;
+    int16_t input_device_id = -1;
 
     Ort::SessionOptions options;
 };
@@ -97,9 +101,12 @@ private:
     bool initialized = false;
 
 public:
-    bool openMicStream(oww::AudioQueue &queue, size_t frameSize, bool verbose);
+    bool init_context(bool verbose);
+    bool openMicStream(oww::AudioQueue &queue, size_t frameSize, int16_t device_id, bool verbose);
     bool startMicStream();
     void stopMicStream();
+    std::vector<std::string> getInputDeviceList();
+    void terminate_context();
 };
 
 void feedAudioFromFile(Settings &settings, oww::State &state, std::FILE *inputStream, std::vector<float> &floatSamplesOut);

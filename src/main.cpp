@@ -8,6 +8,7 @@
 
 constexpr auto d_log = "Detected: [{}] {}\n";    // Detection-log: %d - model index, %s - model path
 
+void listDevices();
 void ensureArg(int argc, char *argv[], int argi);
 void printUsage(char *argv[]);
 
@@ -17,13 +18,11 @@ int main(int argc, char *argv[]) {
     char mel_path[] = OWW_RUNTIME_MODEL_PATH_PREFIX "models/melspectrogram.onnx";
 
     OwwConf conf = {
-        NULL, 0, emb_path, mel_path, 0.5f, 4, 20, 4, 0, 0
+        NULL, 0, emb_path, mel_path, 0.5f, 4, 20, 4, 0, 0, -1
     };
     char *custom_file = NULL;
     char *usr_cmd = NULL;
     uint verbose = 1;
-
-    // detection log format
 
     // Parse arguments
     for (int i = 1; i < argc; i++) {
@@ -44,6 +43,12 @@ int main(int argc, char *argv[]) {
         } else if (arg == "-f" || arg == "--file") {
             ensureArg(argc, argv, i);
             custom_file = argv[++i];
+        } else if (arg == "--list-mics") {
+            listDevices();
+            exit(0);
+        } else if (arg == "-i" || arg == "--device-id") {
+            ensureArg(argc, argv, i);
+            conf.device_id = std::stoi(argv[++i]);
         } else if (arg == "-e" || arg == "--exec") {
             ensureArg(argc, argv, i);
             usr_cmd = strdup(argv[++i]);
@@ -95,6 +100,7 @@ int main(int argc, char *argv[]) {
     }
     if (status) {
         if (verbose) std::cerr << "Error start audio feeding: " << status << std::endl;
+        oww_cleanup();
         return status;
     }
     while (true) {
@@ -118,6 +124,14 @@ int main(int argc, char *argv[]) {
     return 0;
 }
 
+void listDevices() {
+    std::cerr << "Identified input devices: " << std::endl;
+    OwwAudioDeviceList list = oww_get_input_device_list();
+    for (int i=0; i<list.count; i++) {
+        std::cout << list.names[i] << std::endl;
+    }
+}
+
 void printUsage(char *argv[]) {
     std::cerr << std::endl;
     std::cerr << "usage: " << argv[0] << " [options]" << std::endl;
@@ -139,6 +153,12 @@ void printUsage(char *argv[]) {
     <<std::endl;
 
     std::cerr << "   -f  FILE  --file           FILE   path to raw pcm data file "
+    << std::endl;
+
+    std::cerr << "             --list-mics             list all detected audio input devices "
+    << std::endl;
+
+    std::cerr << "   -i  ID    --device-id      ID     input device id to be used. if not provided default device will be used. "
     << std::endl;
 
     std::cerr << "   -e  CMD   --exec           CMD    command to be executed on detection time."

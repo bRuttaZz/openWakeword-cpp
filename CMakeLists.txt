@@ -9,19 +9,28 @@ if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release)
 endif()
 
+find_package(Threads REQUIRED)
+
 include_directories(include)
 include_directories(libs/onnx/include)
 link_directories(libs/onnx/lib)
 
+# Port audio things
 set(PORTAUDIO_BUILD_SHARED OFF)  # static build
 set(PORTAUDIO_BUILD_TESTS OFF)
 add_subdirectory(libs/portaudio)
+# disable build time warning for portaudio (there exists some deprication warnings)
+if(NOT MSVC)
+    target_compile_options(portaudio PRIVATE -w)
+else()
+    target_compile_options(portaudio PRIVATE /w)
+endif()
 
-find_package(Threads REQUIRED)
 
+
+
+# --- Executable target ---
 file(GLOB SRC_FILES "src/*.cpp")
-
-# Executable
 add_executable(openwakeword ${SRC_FILES})
 # Ensuring runtime can find shared libraries
 set_target_properties(openwakeword PROPERTIES

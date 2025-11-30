@@ -2,6 +2,8 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <iostream>
 #include <memory>
@@ -387,6 +389,8 @@ extern "C" {
         ctx.settings->triggerLevel = oww_conf->trigger_level;
         ctx.settings->refractory = oww_conf->refractory;
         ctx.settings->debug = (oww_conf->debug != 0);
+        ctx.settings->input_device_id = oww_conf->device_id;
+
 
         // Absolutely critical for performance
         ctx.settings->options.SetIntraOpNumThreads(1);
@@ -463,6 +467,7 @@ extern "C" {
 
         ctx.state.reset();
         ctx.settings.reset();
+        micHandler.terminate_context();
     }
 
     int oww_start_analysis_from_file(FILE *file) {
@@ -484,7 +489,7 @@ extern "C" {
         }
 
         ctx.micQueue = std::make_shared<oww::AudioQueue>(100);
-        if (!micHandler.openMicStream(*ctx.micQueue, ctx.settings->frameSize, ctx.settings->debug)) {
+        if (!micHandler.openMicStream(*ctx.micQueue, ctx.settings->frameSize, ctx.settings->input_device_id, ctx.settings->debug)) {
             return -2;
         }
 
@@ -502,7 +507,7 @@ extern "C" {
     void oww_stop_analysis() {
         if (!ctx.inputStreamThread.joinable())
             return;
-        micHandler.stopMicStream();
+        micHandler.terminate_context();
         {
             std::unique_lock detectionStatusLock{ctx.state->mutDetection};
             ctx.state->inputStreamExhausted = true;
@@ -531,5 +536,34 @@ extern "C" {
             ctx.detection = -3;
             return wwIdx;
         }
+    }
+
+    void oww_free_input_device_list(OwwAudioDeviceList* list) {
+        if (!list) return;
+        for (size_t i=0; i<list->count; i++) {
+            free(list->names[i]);
+        }
+        free(list->names);
+        list->names = nullptr;
+        list->count = 0;
+    }
+
+    OwwAudioDeviceList oww_get_input_device_list() {
+        OwwAudioDeviceList list;
+        list.names = nullptr;
+        list.count = 0;
+
+        auto devices = micHandler.getInputDeviceList();
+        int length = devices.size();
+        micHandler.terminate_context();
+
+        if (!length) return list;
+
+        list.names = (char**)malloc(sizeof(char*) * length);
+        for (int i=0; i<length; i++) {
+            list.names[i] = strdup(devices[i].c_str());
+        }
+        list.count = length;
+        return list;
     }
 }

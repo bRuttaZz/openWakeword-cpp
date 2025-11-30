@@ -23,8 +23,23 @@ typedef struct {
     uint8_t step_frames;                        // number of 80 ms audio chunks to process at a time (default: 4)
     uint8_t debug;                              // print model probabilities to stderr
     uint8_t use_mic;                            // read from system microphone
+    int16_t device_id;                          // id of input device to be used. set -1 for default.
 } OwwConf;
 
+typedef struct {
+    char** names;
+    size_t count;
+} OwwAudioDeviceList;
+
+/**
+ * Free OwwAudioDeviceList struct objet
+ */
+void oww_free_input_device_list(OwwAudioDeviceList* list);
+
+/*
+ * Get list of device input devices
+ */
+OwwAudioDeviceList oww_get_input_device_list();
 
 /**
  * Initialize wwd runtime with given configs
